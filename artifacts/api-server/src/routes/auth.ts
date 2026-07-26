@@ -161,4 +161,82 @@ router.post("/login", async (req, res) => {
   });
 });
 
+// ===== SETUP ADMIN (one-time) =====
+router.post("/setup-admin", async (req, res) => {
+  const { name, email, password, adminKey } = req.body;
+
+  if (adminKey !== process.env.ADMIN_SETUP_KEY) {
+    res.status(403).json({ error: "Invalid admin key" });
+    return;
+  }
+
+  const existing = users.find((u) => u.email === email);
+  if (existing) {
+    res.status(400).json({ error: "Email already registered" });
+    return;
+  }
+
+  const hashed = await bcrypt.hash(password, 10);
+  const user: User = {
+    id: users.length + 1,
+    name,
+    email,
+    password: hashed,
+    role: "admin",
+  };
+  users.push(user);
+
+  res.status(201).json({
+    message: "Admin user created",
+    user: { id: user.id, name, email, role: user.role },
+  });
+});
+
+// ===== PROMOTE TO ADMIN =====
+router.post("/admin/promote", (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(401).json({ error: "No token provided" });
+    return;
+  }
+
+  const token = authHeader.split(" ")[1];
+  let decoded: { id: number; role: string };
+
+  try {
+    decoded = jwt.verify(token, JWT_SECRET) as { id: number; role: string };
+  } catch {
+    res.status(401).json({ error: "Invalid or expired token" });
+    return;
+  }
+
+  if (decoded.role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+
+  const { email } = req.body;
+  if (!email) {
+    res.status(400).json({ error: "Email is required" });
+    return;
+  }
+
+  const target = users.find((u) => u.email === email);
+  if (!target) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  if (target.role === "admin") {
+    res.status(400).json({ error: "User is already an admin" });
+    return;
+  }
+
+  target.role = "admin";
+  res.json({
+    message: "User promoted to admin",
+    user: { id: target.id, name: target.name, email: target.email, role: target.role },
+  });
+});
+
 export default router;

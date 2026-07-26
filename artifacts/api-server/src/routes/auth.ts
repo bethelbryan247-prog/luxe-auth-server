@@ -165,7 +165,7 @@ router.post("/login", async (req, res) => {
 router.post("/setup-admin", async (req, res) => {
   const { name, email, password, adminKey } = req.body;
 
-  if (adminKey !== process.env.ADMIN_SETUP_KEY) {
+  if (adminKey?.trim() !== process.env.ADMIN_SETUP_KEY?.trim()) {
     res.status(403).json({ error: "Invalid admin key" });
     return;
   }

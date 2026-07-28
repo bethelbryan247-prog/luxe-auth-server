@@ -1,3 +1,4 @@
+import https from "https";
 import app from "./app";
 import { logger } from "./lib/logger";
 
@@ -22,4 +23,16 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  // Keep-alive ping every 4 minutes
+  const devDomain = process.env.REPLIT_DEV_DOMAIN;
+  if (devDomain) {
+    setInterval(() => {
+      https.get(`https://${devDomain}/api/healthz`, (res) => {
+        logger.info({ statusCode: res.statusCode }, "Keep-alive ping");
+      }).on("error", (err) => {
+        logger.warn({ err }, "Keep-alive ping failed");
+      });
+    }, 240000);
+  }
 });

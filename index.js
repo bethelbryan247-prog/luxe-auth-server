@@ -61,4 +61,4 @@
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`LUXE Auth Server running on port ${PORT}`);
-  });  const user = users.find(u => u.email === email);
+  }); 

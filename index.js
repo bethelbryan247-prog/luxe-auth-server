@@ -62,14 +62,3 @@
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`LUXE Auth Server running on port ${PORT}`);
   });  const user = users.find(u => u.email === email);
-  if (!user) return res.status(400).json({ error: 'Invalid credentials' });
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(400).json({ error: 'Invalid credentials' });
-  const expiry = remember ? '7d' : '24h';
-  const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
-  res.json({ message: 'Login successful', token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`LUXE Auth Server running on port ${PORT}`);
-});

@@ -1,36 +1,72 @@
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+  import express from 'express';
+  import bcrypt from 'bcryptjs';
+  import jwt from 'jsonwebtoken';
+  import mongoose from 'mongoose';
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+  const app = express();
+  const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+  app.use(express.json());
 
-const users = [];
+  // Connect to MongoDB
+  mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log('MongoDB connected'))
+    .catch(err => console.error('MongoDB connection error:', err));
 
-app.get('/', (req, res) => {
-  res.json({ message: 'LUXE Auth Server Running' });
-});
+  // User model
+  const UserSchema = new mongoose.Schema({
+    name: String,
+    email: { type: String, unique: true },
+    password: String,
+    role: { type: String, default: 'customer' }
+  });
+  const User = mongoose.model('User', UserSchema);
 
-app.post('/api/register', async (req, res) => {
-  const { name, email, password, role } = req.body;
-  const existing = users.find(u => u.email === email);
-  if (existing) return res.status(400).json({ error: 'Email already registered' });
-  const hashed = await bcrypt.hash(password, 10);
-  const user = { id: users.length + 1, name, email, password: hashed, role: role || 'customer' };
-  users.push(user);
-  res.status(201).json({ message: 'User registered', user: { id: user.id, name, email, role: user.role } });
-});
+  // Seed admin on startup
+  const adminExists = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
+  if (!adminExists) {
+    const hashed = await bcrypt.hash('LuxeAdmin2026', 10);
+    await User.create({
+      name: 'Admin',
+      email: 'bethelbryan1937@gmail.com',
+      password: hashed,
+      role: 'admin'
+    });
+    console.log('Admin user created');
+  }
 
-app.post('/api/login', async (req, res) => {
-  const { email, password, remember } = req.body;
-  const user = users.find(u => u.email === email);
+  app.get('/', (req, res) => {
+    res.json({ message: 'LUXE Auth Server Running' });
+  });
+
+  app.post('/api/register', async (req, res) => {
+    const { name, email, password, role } = req.body;
+    const existing = await User.findOne({ email });
+    if (existing) return res.status(400).json({ error: 'Email already registered' });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ name, email, password: hashed, role: role || 'customer' });
+    res.status(201).json({ message: 'User registered', user: { id: user._id, name, email, role: user.role } });
+  });
+
+  app.post('/api/login', async (req, res) => {
+    const { email, password, remember } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(400).json({ error: 'Invalid credentials' });
+    const expiry = remember ? '7d' : '24h';
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
+    res.json({ message: 'Login successful', token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+  });
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`LUXE Auth Server running on port ${PORT}`);
+  });  const user = users.find(u => u.email === email);
   if (!user) return res.status(400).json({ error: 'Invalid credentials' });
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(400).json({ error: 'Invalid credentials' });
   const expiry = remember ? '7d' : '24h';
-  const token = jwt.sign({ id: user.id, role: user.role }, 'luxe_secret', { expiresIn: expiry });
+  const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
   res.json({ message: 'Login successful', token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
 });
 

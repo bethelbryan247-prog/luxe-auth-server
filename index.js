@@ -2,11 +2,10 @@
   import bcrypt from 'bcryptjs';
   import jwt from 'jsonwebtoken';
   import cors from 'cors';
-
   import mongoose from 'mongoose';
 
   const app = express();
-  app.use(cors()) 
+  app.use(cors());
   const PORT = process.env.PORT || 3000;
 
   app.use(express.json());

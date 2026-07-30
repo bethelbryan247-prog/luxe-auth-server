@@ -74,23 +74,33 @@
   });
 
   // Send OTP
-  app.post('/api/send-otp', async (req, res) => {
+app.post('/api/send-otp', async (req, res) => {
+  console.log('SEND OTP route hit');
   const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
+  console.log('Email received:', email);
+
+  if (!email) {
+    console.log('No email provided');
+    return res.status(400).json({ error: 'Email is required' });
+  }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(email, { otp, expires: Date.now() + 5 * 60 * 1000 });
+  console.log('OTP generated');
 
   try {
-    await transporter.sendMail({
+    console.log('About to send email...');
+    const info = await transporter.sendMail({
       from: process.env.EMAIL_USER,
       to: email,
       subject: 'LUXE – Your OTP Code',
       html: `<h2>Welcome to LUXE</h2><p>Your verification code is:</p><h1 style="letter-spacing:5px;">${otp}</h1><p>This code expires in 5 minutes.</p>`
     });
+
+    console.log('Email sent successfully:', info.response);
     res.json({ message: 'OTP sent' });
   } catch (err) {
-    console.error('Email error:', err);
+    console.error('Email error full:', err);
     res.status(500).json({ error: 'Failed to send OTP' });
   }
 });

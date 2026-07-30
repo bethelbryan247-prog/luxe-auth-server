@@ -1,81 +1,72 @@
   import express from 'express';
-  import bcrypt from 'bcryptjs';
-  import jwt from 'jsonwebtoken';
-  import cors from 'cors';
-  import nodemailer from 'nodemailer';
-  import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import cors from 'cors';
+import { Resend } from 'resend';
+import mongoose from 'mongoose';
 
-  const app = express();
-  app.use(cors());
-  const PORT = process.env.PORT || 3000;
+const app = express();
+app.use(cors());
+const PORT = process.env.PORT || 3000;
 
-  app.use(express.json());
+app.use(express.json());
 
-  // Connect to MongoDB
-  mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB connected'))
-    .catch(err => console.error('MongoDB connection error:', err));
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
 
-  // User model
-  const UserSchema = new mongoose.Schema({
-    name: String,
-    email: { type: String, unique: true },
-    password: String,
-    role: { type: String, default: 'customer' }
+// User model
+const UserSchema = new mongoose.Schema({
+  name: String,
+  email: { type: String, unique: true },
+  password: String,
+  role: { type: String, default: 'customer' }
+});
+const User = mongoose.model('User', UserSchema);
+
+// Seed admin on startup
+const adminExists = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
+if (!adminExists) {
+  const hashed = await bcrypt.hash('LuxeAdmin2026', 10);
+  await User.create({
+    name: 'Admin',
+    email: 'bethelbryan1937@gmail.com',
+    password: hashed,
+    role: 'admin'
   });
-  const User = mongoose.model('User', UserSchema);
+  console.log('Admin user created');
+}
 
-  // Seed admin on startup
-  const adminExists = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
-  if (!adminExists) {
-    const hashed = await bcrypt.hash('LuxeAdmin2026', 10);
-    await User.create({
-      name: 'Admin',
-      email: 'bethelbryan1937@gmail.com',
-      password: hashed,
-      role: 'admin'
-    });
-    console.log('Admin user created');
-  }
-
-  app.get('/', (req, res) => {
-    res.json({ message: 'LUXE Auth Server Running' });
-  });
-
-  app.post('/api/register', async (req, res) => {
-    const { name, email, password, role } = req.body;
-    const existing = await User.findOne({ email });
-    if (existing) return res.status(400).json({ error: 'Email already registered' });
-    const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email, password: hashed, role: role || 'customer' });
-    res.status(201).json({ message: 'User registered', user: { id: user._id, name, email, role: user.role } });
-  });
-
-  app.post('/api/login', async (req, res) => {
-    const { email, password, remember } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ error: 'Invalid credentials' });
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(400).json({ error: 'Invalid credentials' });
-    const expiry = remember ? '7d' : '24h';
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
-    res.json({ message: 'Login successful', token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
-  });
-
-    // ===== OTP System =====
-  const otpStore = new Map();
-
-  const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
+app.get('/', (req, res) => {
+  res.json({ message: 'LUXE Auth Server Running' });
 });
 
-  // Send OTP
+app.post('/api/register', async (req, res) => {
+  const { name, email, password, role } = req.body;
+  const existing = await User.findOne({ email });
+  if (existing) return res.status(400).json({ error: 'Email already registered' });
+  const hashed = await bcrypt.hash(password, 10);
+  const user = await User.create({ name, email, password: hashed, role: role || 'customer' });
+  res.status(201).json({ message: 'User registered', user: { id: user._id, name, email, role: user.role } });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { email, password, remember } = req.body;
+  const user = await User.findOne({ email });
+  if (!user) return res.status(400).json({ error: 'Invalid credentials' });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(400).json({ error: 'Invalid credentials' });
+  const expiry = remember ? '7d' : '24h';
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
+  res.json({ message: 'Login successful', token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+});
+
+// ===== OTP System =====
+const otpStore = new Map();
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+// Send OTP
 app.post('/api/send-otp', async (req, res) => {
   console.log('SEND OTP route hit');
   const { email } = req.body;
@@ -91,15 +82,15 @@ app.post('/api/send-otp', async (req, res) => {
   console.log('OTP generated');
 
   try {
-    console.log('About to send email...');
-    const info = await transporter.sendMail({
-      from: process.env.EMAIL_USER,
+    console.log('About to send email via Resend...');
+    const info = await resend.emails.send({
+      from: 'LUXE <onboarding@resend.dev>',
       to: email,
       subject: 'LUXE – Your OTP Code',
       html: `<h2>Welcome to LUXE</h2><p>Your verification code is:</p><h1 style="letter-spacing:5px;">${otp}</h1><p>This code expires in 5 minutes.</p>`
     });
 
-    console.log('Email sent successfully:', info.response);
+    console.log('Email sent successfully:', JSON.stringify(info));
     res.json({ message: 'OTP sent' });
   } catch (err) {
     console.error('Email error full:', err);
@@ -123,6 +114,6 @@ app.post('/api/verify-otp', async (req, res) => {
   res.json({ message: 'OTP verified' });
 });
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`LUXE Auth Server running on port ${PORT}`);
-  }); 
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`LUXE Auth Server running on port ${PORT}`);
+});

@@ -1,4 +1,4 @@
-  import express from 'express';
+import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import cors from 'cors';
@@ -16,7 +16,7 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// User model
+// ===== USER MODEL =====
 const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
@@ -25,7 +25,33 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
-// Seed admin on startup
+// ===== PRODUCT MODEL =====
+const ProductSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  price: { type: Number, default: 0 },
+  world: { type: String, required: true },
+  category: { type: String, default: 'uncategorized' },
+  badge: { type: String, default: '—' },
+  badgeType: { type: String, default: 'default' },
+  description: { type: String, default: '—' },
+  images: [String],
+  sizes: [String],
+  colours: [String],
+  flavours: [String],
+  shades: [String],
+  specs: [String],
+  type: { type: String, default: '' },
+  sizePrices: { type: Object, default: null },
+  video: [String],
+  detail: { type: String, default: '' },
+  notes: { type: Object, default: null },
+  concentration: [String],
+  options: [String],
+  createdAt: { type: Date, default: Date.now }
+});
+const Product = mongoose.model('Product', ProductSchema);
+
+// ===== SEED ADMIN =====
 const adminExists = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
 if (!adminExists) {
   const hashed = await bcrypt.hash('LuxeAdmin2026', 10);
@@ -38,10 +64,31 @@ if (!adminExists) {
   console.log('Admin user created');
 }
 
+// ===== AUTH MIDDLEWARE =====
+function authMiddleware(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
+    req.userId = decoded.id;
+    req.userRole = decoded.role;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+}
+
+function adminMiddleware(req, res, next) {
+  if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin access required' });
+  next();
+}
+
+// ===== BASIC ROUTE =====
 app.get('/', (req, res) => {
   res.json({ message: 'LUXE Auth Server Running' });
 });
 
+// ===== AUTH ROUTES =====
 app.post('/api/register', async (req, res) => {
   const { name, email, password, role } = req.body;
   const existing = await User.findOne({ email });
@@ -62,11 +109,10 @@ app.post('/api/login', async (req, res) => {
   res.json({ message: 'Login successful', token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 });
 
-// ===== OTP System =====
+// ===== OTP SYSTEM =====
 const otpStore = new Map();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// Send OTP
 app.post('/api/send-otp', async (req, res) => {
   console.log('SEND OTP route hit');
   const { email } = req.body;
@@ -98,7 +144,6 @@ app.post('/api/send-otp', async (req, res) => {
   }
 });
 
-// Verify OTP
 app.post('/api/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   const stored = otpStore.get(email);
@@ -112,6 +157,79 @@ app.post('/api/verify-otp', async (req, res) => {
 
   otpStore.delete(email);
   res.json({ message: 'OTP verified' });
+});
+
+// ===== PRODUCT ENDPOINTS =====
+
+// Get all products (optionally filter by world)
+app.get('/api/products', async (req, res) => {
+  try {
+    const { world } = req.query;
+    const filter = world ? { world } : {};
+    const products = await Product.find(filter);
+    res.json({ products });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch products' });
+  }
+});
+
+// Get single product
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json({ product });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch product' });
+  }
+});
+
+// Create product (admin only)
+app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const product = await Product.create(req.body);
+    res.status(201).json({ message: 'Product created', product });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create product' });
+  }
+});
+
+// Update product (admin only)
+app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json({ message: 'Product updated', product });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update product' });
+  }
+});
+
+// Delete product (admin only)
+app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json({ message: 'Product deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete product' });
+  }
+});
+
+// ===== ADMIN ENDPOINTS =====
+app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOneAndUpdate(
+      { email },
+      { role: 'admin' },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'User promoted to admin', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to promote user' });
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {

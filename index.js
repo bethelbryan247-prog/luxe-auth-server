@@ -55,7 +55,7 @@ const ProductSchema = new mongoose.Schema({
 
   path: { type: String, default: '' },
   character: { type: String, default: '' },
-  isNew: { type: Boolean, default: false },
+  isNewArrival: { type: Boolean, default: false },
 
   createdAt: { type: Date, default: Date.now }
 });

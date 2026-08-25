@@ -31,22 +31,32 @@ const ProductSchema = new mongoose.Schema({
   price: { type: Number, default: 0 },
   world: { type: String, required: true },
   category: { type: String, default: 'uncategorized' },
+
   badge: { type: String, default: '—' },
   badgeType: { type: String, default: 'default' },
   description: { type: String, default: '—' },
-  images: [String],
-  sizes: [String],
-  colours: [String],
-  flavours: [String],
-  shades: [String],
-  specs: [String],
-  type: { type: String, default: '' },
-  sizePrices: { type: Object, default: null },
-  video: [String],
   detail: { type: String, default: '' },
-  notes: { type: Object, default: null },
-  concentration: [String],
-  options: [String],
+  type: { type: String, default: '' },
+
+  images: { type: [String], default: [] },
+  video: { type: [String], default: [] },
+
+  sizes: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  colours: { type: [mongoose.Schema.Types.Mixed], default: [] },
+
+  flavours: { type: [String], default: [] },
+  shades: { type: [String], default: [] },
+  specs: { type: [String], default: [] },
+  options: { type: [String], default: [] },
+  concentration: { type: [String], default: [] },
+
+  sizePrices: { type: mongoose.Schema.Types.Mixed, default: null },
+  notes: { type: mongoose.Schema.Types.Mixed, default: null },
+
+  path: { type: String, default: '' },
+  character: { type: String, default: '' },
+  isNew: { type: Boolean, default: false },
+
   createdAt: { type: Date, default: Date.now }
 });
 const Product = mongoose.model('Product', ProductSchema);

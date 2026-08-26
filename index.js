@@ -11,6 +11,11 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// ===== SUPER ADMIN CONFIG =====
+const SUPER_ADMIN_EMAIL = 'bethelbryan247@gmail.com';
+const SUPER_ADMIN_NAME = 'bethelbryan';
+const SUPER_ADMIN_PASSWORD = '193720469780';
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('MongoDB connected'))
@@ -61,17 +66,35 @@ const ProductSchema = new mongoose.Schema({
 });
 const Product = mongoose.model('Product', ProductSchema);
 
-// ===== SEED ADMIN =====
-const adminExists = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
-if (!adminExists) {
-  const hashed = await bcrypt.hash('LuxeAdmin2026', 10);
+// ===== SEED SUPER ADMIN =====
+// - If new super admin already exists, make sure it's admin + update password
+// - If old admin (bethelbryan1937@gmail.com) exists, convert it to the new super admin
+// - Otherwise create the new super admin from scratch
+const existingNewAdmin = await User.findOne({ email: SUPER_ADMIN_EMAIL });
+const existingOldAdmin = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
+
+if (existingNewAdmin) {
+  existingNewAdmin.name = SUPER_ADMIN_NAME;
+  existingNewAdmin.role = 'admin';
+  existingNewAdmin.password = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
+  await existingNewAdmin.save();
+  console.log('Super admin updated');
+} else if (existingOldAdmin) {
+  existingOldAdmin.name = SUPER_ADMIN_NAME;
+  existingOldAdmin.email = SUPER_ADMIN_EMAIL;
+  existingOldAdmin.role = 'admin';
+  existingOldAdmin.password = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
+  await existingOldAdmin.save();
+  console.log('Old admin converted to super admin');
+} else {
+  const hashed = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
   await User.create({
-    name: 'Admin',
-    email: 'bethelbryan1937@gmail.com',
+    name: SUPER_ADMIN_NAME,
+    email: SUPER_ADMIN_EMAIL,
     password: hashed,
     role: 'admin'
   });
-  console.log('Admin user created');
+  console.log('Super admin created');
 }
 
 // ===== AUTH MIDDLEWARE =====
@@ -82,6 +105,7 @@ function authMiddleware(req, res, next) {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
     req.userId = decoded.id;
     req.userRole = decoded.role;
+    req.userEmail = decoded.email;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });
@@ -115,8 +139,17 @@ app.post('/api/login', async (req, res) => {
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(400).json({ error: 'Invalid credentials' });
   const expiry = remember ? '7d' : '24h';
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET || 'luxe_secret', { expiresIn: expiry });
-  res.json({ message: 'Login successful', token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+  // Include email in token so super-admin checks work on protected routes
+  const token = jwt.sign(
+    { id: user._id, role: user.role, email: user.email },
+    process.env.JWT_SECRET || 'luxe_secret',
+    { expiresIn: expiry }
+  );
+  res.json({
+    message: 'Login successful',
+    token,
+    user: { id: user._id, name: user.name, email: user.email, role: user.role }
+  });
 });
 
 // ===== OTP SYSTEM =====
@@ -227,16 +260,42 @@ app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res
 });
 
 // ===== ADMIN ENDPOINTS =====
+// Only the super admin can promote customers to admin
 app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.userEmail !== SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Only the super admin can promote users' });
+    }
+
     const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (email === SUPER_ADMIN_EMAIL) {
+      return res.status(400).json({ error: 'This user is already the super admin' });
+    }
+
     const user = await User.findOneAndUpdate(
       { email },
       { role: 'admin' },
       { new: true }
     );
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json({ message: 'User promoted to admin', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      message: 'User promoted to admin',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to promote user' });
   }

@@ -14,7 +14,7 @@ app.use(express.json());
 // ===== SUPER ADMIN CONFIG =====
 const SUPER_ADMIN_EMAIL = 'bethelbryan247@gmail.com';
 const SUPER_ADMIN_NAME = 'bethelbryan';
-const SUPER_ADMIN_PASSWORD = '193720469780';
+const SUPER_ADMIN_PASSWORD = 'PUT_YOUR_NEW_PASSWORD_HERE'; // ← Replace this before deploying
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
@@ -298,6 +298,48 @@ app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res)
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to promote user' });
+  }
+});
+
+// ===== DEMOTE ADMIN (super admin only) =====
+// Only the super admin can demote admins back to customers
+app.post('/api/admin/demote', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.userEmail !== SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Only the super admin can demote users' });
+    }
+
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    if (email === SUPER_ADMIN_EMAIL) {
+      return res.status(400).json({ error: 'Cannot demote the super admin' });
+    }
+
+    const user = await User.findOneAndUpdate(
+      { email },
+      { role: 'customer' },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      message: 'Admin demoted to customer',
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to demote user' });
   }
 });
 

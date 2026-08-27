@@ -14,7 +14,7 @@ app.use(express.json());
 // ===== SUPER ADMIN CONFIG =====
 const SUPER_ADMIN_EMAIL = 'bethelbryan247@gmail.com';
 const SUPER_ADMIN_NAME = 'bethelbryan';
-const SUPER_ADMIN_PASSWORD = 'PUT_YOUR_NEW_PASSWORD_HERE'; // ← Replace this before deploying
+const SUPER_ADMIN_PASSWORD = '193720469780';
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGO_URI)
@@ -26,7 +26,17 @@ const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true },
   password: String,
-  role: { type: String, default: 'customer' }
+  role: { type: String, default: 'customer' },
+  delivery: {
+    phone: { type: String, default: '' },
+    address: { type: String, default: '' },
+    city: { type: String, default: '' },
+    state: { type: String, default: '' },
+    notes: { type: String, default: '' }
+  },
+  cart: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  orders: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  joinDate: { type: String, default: '' }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -36,40 +46,30 @@ const ProductSchema = new mongoose.Schema({
   price: { type: Number, default: 0 },
   world: { type: String, required: true },
   category: { type: String, default: 'uncategorized' },
-
   badge: { type: String, default: '—' },
   badgeType: { type: String, default: 'default' },
   description: { type: String, default: '—' },
   detail: { type: String, default: '' },
   type: { type: String, default: '' },
-
   images: { type: [String], default: [] },
   video: { type: [String], default: [] },
-
   sizes: { type: [mongoose.Schema.Types.Mixed], default: [] },
   colours: { type: [mongoose.Schema.Types.Mixed], default: [] },
-
   flavours: { type: [String], default: [] },
   shades: { type: [String], default: [] },
   specs: { type: [String], default: [] },
   options: { type: [String], default: [] },
   concentration: { type: [String], default: [] },
-
   sizePrices: { type: mongoose.Schema.Types.Mixed, default: null },
   notes: { type: mongoose.Schema.Types.Mixed, default: null },
-
   path: { type: String, default: '' },
   character: { type: String, default: '' },
   isNewArrival: { type: Boolean, default: false },
-
   createdAt: { type: Date, default: Date.now }
 });
 const Product = mongoose.model('Product', ProductSchema);
 
 // ===== SEED SUPER ADMIN =====
-// - If new super admin already exists, make sure it's admin + update password
-// - If old admin (bethelbryan1937@gmail.com) exists, convert it to the new super admin
-// - Otherwise create the new super admin from scratch
 const existingNewAdmin = await User.findOne({ email: SUPER_ADMIN_EMAIL });
 const existingOldAdmin = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
 
@@ -88,12 +88,7 @@ if (existingNewAdmin) {
   console.log('Old admin converted to super admin');
 } else {
   const hashed = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
-  await User.create({
-    name: SUPER_ADMIN_NAME,
-    email: SUPER_ADMIN_EMAIL,
-    password: hashed,
-    role: 'admin'
-  });
+  await User.create({ name: SUPER_ADMIN_NAME, email: SUPER_ADMIN_EMAIL, password: hashed, role: 'admin' });
   console.log('Super admin created');
 }
 
@@ -139,7 +134,6 @@ app.post('/api/login', async (req, res) => {
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(400).json({ error: 'Invalid credentials' });
   const expiry = remember ? '7d' : '24h';
-  // Include email in token so super-admin checks work on protected routes
   const token = jwt.sign(
     { id: user._id, role: user.role, email: user.email },
     process.env.JWT_SECRET || 'luxe_secret',
@@ -160,16 +154,13 @@ app.post('/api/send-otp', async (req, res) => {
   console.log('SEND OTP route hit');
   const { email } = req.body;
   console.log('Email received:', email);
-
   if (!email) {
     console.log('No email provided');
     return res.status(400).json({ error: 'Email is required' });
   }
-
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(email, { otp, expires: Date.now() + 5 * 60 * 1000 });
   console.log('OTP generated');
-
   try {
     console.log('About to send email via Resend...');
     const info = await resend.emails.send({
@@ -178,7 +169,6 @@ app.post('/api/send-otp', async (req, res) => {
       subject: 'LUXE – Your OTP Code',
       html: `<h2>Welcome to LUXE</h2><p>Your verification code is:</p><h1 style="letter-spacing:5px;">${otp}</h1><p>This code expires in 5 minutes.</p>`
     });
-
     console.log('Email sent successfully:', JSON.stringify(info));
     res.json({ message: 'OTP sent' });
   } catch (err) {
@@ -190,21 +180,17 @@ app.post('/api/send-otp', async (req, res) => {
 app.post('/api/verify-otp', async (req, res) => {
   const { email, otp } = req.body;
   const stored = otpStore.get(email);
-
   if (!stored) return res.status(400).json({ error: 'No OTP found. Request a new one.' });
   if (Date.now() > stored.expires) {
     otpStore.delete(email);
     return res.status(400).json({ error: 'OTP expired. Request a new one.' });
   }
   if (stored.otp !== otp) return res.status(400).json({ error: 'Invalid OTP' });
-
   otpStore.delete(email);
   res.json({ message: 'OTP verified' });
 });
 
 // ===== PRODUCT ENDPOINTS =====
-
-// Get all products (optionally filter by world)
 app.get('/api/products', async (req, res) => {
   try {
     const { world } = req.query;
@@ -216,7 +202,6 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// Get single product
 app.get('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -227,7 +212,6 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// Create product (admin only)
 app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const product = await Product.create(req.body);
@@ -237,7 +221,6 @@ app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
   }
 });
 
-// Update product (admin only)
 app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -248,7 +231,6 @@ app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) =
   }
 });
 
-// Delete product (admin only)
 app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
@@ -259,85 +241,86 @@ app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res
   }
 });
 
+// ===== CUSTOMER ENDPOINTS =====
+app.get('/api/customers', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await User.find({}, { password: 0 });
+    res.json({ customers: users });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch customers' });
+  }
+});
+
+app.get('/api/customers/:email', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const user = await User.findOne({ email: req.params.email }, { password: 0 });
+    if (!user) return res.status(404).json({ error: 'Customer not found' });
+    res.json({ customer: user });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch customer' });
+  }
+});
+
+// ===== ORDER ENDPOINTS =====
+app.get('/api/orders', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const users = await User.find({ 'orders.0': { $exists: true } }, { password: 0 });
+    const orders = [];
+    users.forEach(u => {
+      (u.orders || []).forEach(o => {
+        orders.push({ ...o, customerName: u.name, customerEmail: u.email });
+      });
+    });
+    res.json({ orders });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+app.put('/api/orders/:orderId/status', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { status, email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const order = user.orders.find(o => o.id === orderId);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    order.status = status;
+    await user.save();
+    res.json({ message: 'Order status updated', order });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update order status' });
+  }
+});
+
 // ===== ADMIN ENDPOINTS =====
-// Only the super admin can promote customers to admin
 app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.userEmail !== SUPER_ADMIN_EMAIL) {
       return res.status(403).json({ error: 'Only the super admin can promote users' });
     }
-
     const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-
-    if (email === SUPER_ADMIN_EMAIL) {
-      return res.status(400).json({ error: 'This user is already the super admin' });
-    }
-
-    const user = await User.findOneAndUpdate(
-      { email },
-      { role: 'admin' },
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    res.json({
-      message: 'User promoted to admin',
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'This user is already the super admin' });
+    const user = await User.findOneAndUpdate({ email }, { role: 'admin' }, { new: true });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'User promoted to admin', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to promote user' });
   }
 });
 
-// ===== DEMOTE ADMIN (super admin only) =====
-// Only the super admin can demote admins back to customers
 app.post('/api/admin/demote', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.userEmail !== SUPER_ADMIN_EMAIL) {
       return res.status(403).json({ error: 'Only the super admin can demote users' });
     }
-
     const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ error: 'Email is required' });
-    }
-
-    if (email === SUPER_ADMIN_EMAIL) {
-      return res.status(400).json({ error: 'Cannot demote the super admin' });
-    }
-
-    const user = await User.findOneAndUpdate(
-      { email },
-      { role: 'customer' },
-      { new: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    res.json({
-      message: 'Admin demoted to customer',
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'Cannot demote the super admin' });
+    const user = await User.findOneAndUpdate({ email }, { role: 'customer' }, { new: true });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'Admin demoted to customer', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to demote user' });
   }

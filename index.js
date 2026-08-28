@@ -365,8 +365,8 @@ app.post('/api/admin/demote', authMiddleware, adminMiddleware, async (req, res) 
     }
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
-    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'Cannot demote the super admin' });
-    const user = await User.findOneAndUpdate({ email }, { role: 'customer' }, { new: true });
+    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'Cannot demote the original super admin' });
+    const user = await User.findOneAndUpdate({ email }, { role: 'customer', isSuperAdmin: false }, { new: true });
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ message: 'Admin demoted to customer', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {

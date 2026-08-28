@@ -201,7 +201,19 @@ app.get('/api/products', async (req, res) => {
     if (world) filter.world = world;
 
     if (showAll === 'true') {
-      // Admin sees everything
+      // Admin mode - check if super admin
+      let isSuperAdmin = false;
+      const token = req.headers.authorization?.split(' ')[1];
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
+          isSuperAdmin = decoded.email === SUPER_ADMIN_EMAIL;
+        } catch (e) {}
+      }
+      // Regular admins can't see hidden products
+      if (!isSuperAdmin) {
+        filter.status = { $ne: 'hidden' };
+      }
     } else {
       // Shop - check if customer is VIP
       let isVip = false;
@@ -240,6 +252,9 @@ app.get('/api/products/:id', async (req, res) => {
 
 app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.body.status === 'hidden' && req.userEmail !== SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Only the super admin can set products to hidden' });
+    }
     const product = await Product.create(req.body);
     res.status(201).json({ message: 'Product created', product });
   } catch (err) {
@@ -249,6 +264,9 @@ app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
 
 app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (req.body.status === 'hidden' && req.userEmail !== SUPER_ADMIN_EMAIL) {
+      return res.status(403).json({ error: 'Only the super admin can set products to hidden' });
+    }
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!product) return res.status(404).json({ error: 'Product not found' });
     res.json({ message: 'Product updated', product });

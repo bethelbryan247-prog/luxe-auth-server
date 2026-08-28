@@ -65,6 +65,8 @@ const ProductSchema = new mongoose.Schema({
   path: { type: String, default: '' },
   character: { type: String, default: '' },
   isNewArrival: { type: Boolean, default: false },
+  isFeatured: { type: Boolean, default: false },
+  status: { type: String, default: 'published' },
   createdAt: { type: Date, default: Date.now }
 });
 const Product = mongoose.model('Product', ProductSchema);

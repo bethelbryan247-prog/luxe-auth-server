@@ -28,6 +28,7 @@ const UserSchema = new mongoose.Schema({
   password: String,
   role: { type: String, default: 'customer' },
   isVip: { type: Boolean, default: false },
+  isSuperAdmin: { type: Boolean, default: false },
   delivery: {
     phone: { type: String, default: '' },
     address: { type: String, default: '' },
@@ -79,6 +80,7 @@ const existingOldAdmin = await User.findOne({ email: 'bethelbryan1937@gmail.com'
 if (existingNewAdmin) {
   existingNewAdmin.name = SUPER_ADMIN_NAME;
   existingNewAdmin.role = 'admin';
+  existingNewAdmin.isSuperAdmin = true;
   existingNewAdmin.password = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
   await existingNewAdmin.save();
   console.log('Super admin updated');
@@ -86,12 +88,13 @@ if (existingNewAdmin) {
   existingOldAdmin.name = SUPER_ADMIN_NAME;
   existingOldAdmin.email = SUPER_ADMIN_EMAIL;
   existingOldAdmin.role = 'admin';
+  existingOldAdmin.isSuperAdmin = true;
   existingOldAdmin.password = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
   await existingOldAdmin.save();
   console.log('Old admin converted to super admin');
 } else {
   const hashed = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
-  await User.create({ name: SUPER_ADMIN_NAME, email: SUPER_ADMIN_EMAIL, password: hashed, role: 'admin' });
+  await User.create({ name: SUPER_ADMIN_NAME, email: SUPER_ADMIN_EMAIL, password: hashed, role: 'admin', isSuperAdmin: true });
   console.log('Super admin created');
 }
 
@@ -104,6 +107,7 @@ function authMiddleware(req, res, next) {
     req.userId = decoded.id;
     req.userRole = decoded.role;
     req.userEmail = decoded.email;
+    req.isSuperAdmin = decoded.email === SUPER_ADMIN_EMAIL || decoded.isSuperAdmin === true;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid token' });
@@ -138,7 +142,7 @@ app.post('/api/login', async (req, res) => {
   if (!match) return res.status(400).json({ error: 'Invalid credentials' });
   const expiry = remember ? '7d' : '24h';
   const token = jwt.sign(
-    { id: user._id, role: user.role, email: user.email },
+    { id: user._id, role: user.role, email: user.email, isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL },
     process.env.JWT_SECRET || 'luxe_secret',
     { expiresIn: expiry }
   );
@@ -207,7 +211,7 @@ app.get('/api/products', async (req, res) => {
       if (token) {
         try {
           const decoded = jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
-          isSuperAdmin = decoded.email === SUPER_ADMIN_EMAIL;
+          isSuperAdmin = decoded.email === SUPER_ADMIN_EMAIL || decoded.isSuperAdmin === true;
         } catch (e) {}
       }
       // Regular admins can't see hidden products
@@ -252,7 +256,7 @@ app.get('/api/products/:id', async (req, res) => {
 
 app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    if (req.body.status === 'hidden' && req.userEmail !== SUPER_ADMIN_EMAIL) {
+    if (req.body.status === 'hidden' && !req.isSuperAdmin) {
       return res.status(403).json({ error: 'Only the super admin can set products to hidden' });
     }
     const product = await Product.create(req.body);
@@ -264,7 +268,7 @@ app.post('/api/products', authMiddleware, adminMiddleware, async (req, res) => {
 
 app.put('/api/products/:id', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    if (req.body.status === 'hidden' && req.userEmail !== SUPER_ADMIN_EMAIL) {
+    if (req.body.status === 'hidden' && !req.isSuperAdmin) {
       return res.status(403).json({ error: 'Only the super admin can set products to hidden' });
     }
     const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -340,7 +344,7 @@ app.put('/api/orders/:orderId/status', authMiddleware, adminMiddleware, async (r
 // ===== ADMIN ENDPOINTS =====
 app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    if (req.userEmail !== SUPER_ADMIN_EMAIL) {
+    if (!req.isSuperAdmin) {
       return res.status(403).json({ error: 'Only the super admin can promote users' });
     }
     const { email } = req.body;
@@ -356,7 +360,7 @@ app.post('/api/admin/promote', authMiddleware, adminMiddleware, async (req, res)
 
 app.post('/api/admin/demote', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    if (req.userEmail !== SUPER_ADMIN_EMAIL) {
+    if (!req.isSuperAdmin) {
       return res.status(403).json({ error: 'Only the super admin can demote users' });
     }
     const { email } = req.body;
@@ -367,6 +371,66 @@ app.post('/api/admin/demote', authMiddleware, adminMiddleware, async (req, res) 
     res.json({ message: 'Admin demoted to customer', user: { id: user._id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to demote user' });
+  }
+});
+
+// ===== VIP MANAGEMENT (super admin only) =====
+app.put('/api/customers/:email/vip', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!req.isSuperAdmin) {
+      return res.status(403).json({ error: 'Only the super admin can manage VIP status' });
+    }
+    const { isVip } = req.body;
+    const user = await User.findOneAndUpdate(
+      { email: req.params.email },
+      { isVip: isVip },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'VIP status updated', customer: { email: user.email, isVip: user.isVip } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update VIP status' });
+  }
+});
+
+// ===== SUPER ADMIN PROMOTION (super admin only) =====
+app.post('/api/admin/promote-super', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!req.isSuperAdmin) {
+      return res.status(403).json({ error: 'Only the super admin can promote to super admin' });
+    }
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'This user is already the super admin' });
+    const user = await User.findOneAndUpdate(
+      { email },
+      { isSuperAdmin: true, role: 'admin' },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'User promoted to super admin', user: { id: user._id, name: user.name, email: user.email, isSuperAdmin: user.isSuperAdmin } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to promote to super admin' });
+  }
+});
+
+app.post('/api/admin/demote-super', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!req.isSuperAdmin) {
+      return res.status(403).json({ error: 'Only the super admin can demote super admins' });
+    }
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    if (email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: 'Cannot demote the original super admin' });
+    const user = await User.findOneAndUpdate(
+      { email },
+      { isSuperAdmin: false },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ message: 'Super admin demoted to admin', user: { id: user._id, name: user.name, email: user.email, isSuperAdmin: user.isSuperAdmin } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to demote super admin' });
   }
 });
 

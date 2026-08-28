@@ -24,8 +24,14 @@ mongoose.connect(process.env.MONGO_URI)
 // ===== USER MODEL =====
 const UserSchema = new mongoose.Schema({
   name: String,
+  firstName: { type: String, default: '' },
+  lastName: { type: String, default: '' },
+  username: { type: String, default: '' },
   email: { type: String, unique: true },
   password: String,
+  phone: { type: String, default: '' },
+  address: { type: String, default: '' },
+  state: { type: String, default: '' },
   role: { type: String, default: 'customer' },
   isVip: { type: Boolean, default: false },
   isSuperAdmin: { type: Boolean, default: false },
@@ -149,7 +155,16 @@ app.post('/api/login', async (req, res) => {
   res.json({
     message: 'Login successful',
     token,
-    user: { id: user._id, name: user.name, email: user.email, role: user.role }
+    user: {
+      id: user._id, name: user.name,
+      firstName: user.firstName || '', lastName: user.lastName || '',
+      username: user.username || user.name || '',
+      email: user.email, phone: user.phone || '',
+      address: user.address || '', state: user.state || '',
+      role: user.role,
+      isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL,
+      isVip: user.isVip
+    }
   });
 });
 
@@ -158,28 +173,19 @@ const otpStore = new Map();
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 app.post('/api/send-otp', async (req, res) => {
-  console.log('SEND OTP route hit');
   const { email } = req.body;
-  console.log('Email received:', email);
-  if (!email) {
-    console.log('No email provided');
-    return res.status(400).json({ error: 'Email is required' });
-  }
+  if (!email) return res.status(400).json({ error: 'Email is required' });
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   otpStore.set(email, { otp, expires: Date.now() + 5 * 60 * 1000 });
-  console.log('OTP generated');
   try {
-    console.log('About to send email via Resend...');
     const info = await resend.emails.send({
       from: 'LUXE <onboarding@resend.dev>',
       to: email,
       subject: 'LUXE – Your OTP Code',
       html: `<h2>Welcome to LUXE</h2><p>Your verification code is:</p><h1 style="letter-spacing:5px;">${otp}</h1><p>This code expires in 5 minutes.</p>`
     });
-    console.log('Email sent successfully:', JSON.stringify(info));
     res.json({ message: 'OTP sent' });
   } catch (err) {
-    console.error('Email error full:', err);
     res.status(500).json({ error: 'Failed to send OTP' });
   }
 });
@@ -205,7 +211,6 @@ app.get('/api/products', async (req, res) => {
     if (world) filter.world = world;
 
     if (showAll === 'true') {
-      // Admin mode - check if super admin
       let isSuperAdmin = false;
       const token = req.headers.authorization?.split(' ')[1];
       if (token) {
@@ -214,12 +219,8 @@ app.get('/api/products', async (req, res) => {
           isSuperAdmin = decoded.email === SUPER_ADMIN_EMAIL || decoded.isSuperAdmin === true;
         } catch (e) {}
       }
-      // Regular admins can't see hidden products
-      if (!isSuperAdmin) {
-        filter.status = { $ne: 'hidden' };
-      }
+      if (!isSuperAdmin) filter.status = { $ne: 'hidden' };
     } else {
-      // Shop - check if customer is VIP
       let isVip = false;
       const token = req.headers.authorization?.split(' ')[1];
       if (token) {
@@ -229,7 +230,6 @@ app.get('/api/products', async (req, res) => {
           isVip = user && user.isVip;
         } catch (e) {}
       }
-
       if (isVip) {
         filter.status = { $in: ['published', 'out_of_stock', 'hidden'] };
       } else {
@@ -292,8 +292,13 @@ app.delete('/api/products/:id', authMiddleware, adminMiddleware, async (req, res
 // ===== CUSTOMER ENDPOINTS =====
 app.get('/api/customers', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const users = await User.find({}, { password: 0 });
-    res.json({ customers: users });
+    if (req.isSuperAdmin) {
+      const users = await User.find({}, { password: 0 });
+      res.json({ customers: users });
+    } else {
+      const users = await User.find({ role: 'customer' }, { password: 0 });
+      res.json({ customers: users });
+    }
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch customers' });
   }
@@ -303,6 +308,9 @@ app.get('/api/customers/:email', authMiddleware, adminMiddleware, async (req, re
   try {
     const user = await User.findOne({ email: req.params.email }, { password: 0 });
     if (!user) return res.status(404).json({ error: 'Customer not found' });
+    if (!req.isSuperAdmin && user.role === 'admin') {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     res.json({ customer: user });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch customer' });
@@ -431,6 +439,98 @@ app.post('/api/admin/demote-super', authMiddleware, adminMiddleware, async (req,
     res.json({ message: 'Super admin demoted to admin', user: { id: user._id, name: user.name, email: user.email, isSuperAdmin: user.isSuperAdmin } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to demote super admin' });
+  }
+});
+
+// ===== PROFILE ENDPOINTS =====
+app.get('/api/auth/profile', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId, { password: 0 });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      user: {
+        id: user._id, name: user.name,
+        firstName: user.firstName || '', lastName: user.lastName || '',
+        username: user.username || user.name || '',
+        email: user.email, phone: user.phone || '',
+        address: user.address || '', state: user.state || '',
+        role: user.role,
+        isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL,
+        isVip: user.isVip
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+app.put('/api/auth/update-profile', authMiddleware, async (req, res) => {
+  try {
+    const { firstName, lastName, username, phone, address, state } = req.body;
+    if (!firstName?.trim()) return res.status(400).json({ error: 'First name is required' });
+    if (!lastName?.trim()) return res.status(400).json({ error: 'Last name is required' });
+    if (!username?.trim()) return res.status(400).json({ error: 'Username is required' });
+    if (!phone?.trim()) return res.status(400).json({ error: 'Phone number is required' });
+    if (!address?.trim()) return res.status(400).json({ error: 'Address is required' });
+    if (!state?.trim()) return res.status(400).json({ error: 'State is required' });
+
+    const existing = await User.findOne({ username: username.trim(), _id: { $ne: req.userId } });
+    if (existing) return res.status(400).json({ error: 'Username is already taken' });
+
+    const fullName = firstName.trim() + ' ' + lastName.trim();
+    const user = await User.findByIdAndUpdate(
+      req.userId,
+      {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        username: username.trim(),
+        name: fullName,
+        phone: phone.trim(),
+        address: address.trim(),
+        state: state.trim()
+      },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        address: user.address,
+        state: user.state,
+        role: user.role,
+        isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password are required' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
+
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) return res.status(400).json({ error: 'Current password is incorrect' });
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update password' });
   }
 });
 

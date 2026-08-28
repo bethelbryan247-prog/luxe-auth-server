@@ -27,6 +27,7 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, unique: true },
   password: String,
   role: { type: String, default: 'customer' },
+  isVip: { type: Boolean, default: false },
   delivery: {
     phone: { type: String, default: '' },
     address: { type: String, default: '' },
@@ -195,8 +196,31 @@ app.post('/api/verify-otp', async (req, res) => {
 // ===== PRODUCT ENDPOINTS =====
 app.get('/api/products', async (req, res) => {
   try {
-    const { world } = req.query;
-    const filter = world ? { world } : {};
+    const { world, showAll } = req.query;
+    const filter = {};
+    if (world) filter.world = world;
+
+    if (showAll === 'true') {
+      // Admin sees everything
+    } else {
+      // Shop - check if customer is VIP
+      let isVip = false;
+      const token = req.headers.authorization?.split(' ')[1];
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
+          const user = await User.findById(decoded.id);
+          isVip = user && user.isVip;
+        } catch (e) {}
+      }
+
+      if (isVip) {
+        filter.status = { $in: ['published', 'out_of_stock', 'hidden'] };
+      } else {
+        filter.status = { $in: ['published', 'out_of_stock'] };
+      }
+    }
+
     const products = await Product.find(filter);
     res.json({ products });
   } catch (err) {

@@ -520,4 +520,12 @@ app.put('/api/auth/update-profile', authMiddleware, async (req, res) => {
         isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL
       }
     });
-  } catch (err)
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// ===== START SERVER =====
+app.listen(PORT, () => {
+  console.log(`LUXE Auth Server running on port ${PORT}`);
+});

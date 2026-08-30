@@ -296,6 +296,98 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
+// ===== GOOGLE AUTH =====
+app.post('/api/google-auth', async (req, res) => {
+  try {
+    const { email, name, googleId } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    // Check if user exists
+    let user = await User.findOne({ email: email.toLowerCase().trim() });
+
+    if (!user) {
+      // Create new user from Google profile
+      const username = (name || 'user').toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.floor(Math.random() * 10000);
+      user = await User.create({
+        name: name || 'Google User',
+        username: username,
+        email: email.toLowerCase().trim(),
+        password: await bcrypt.hash(googleId + process.env.JWT_SECRET || 'luxe_secret', 10),
+        role: 'customer'
+      });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, role: user.role, email: user.email, isSuperAdmin: user.isSuperAdmin || false },
+      process.env.JWT_SECRET || 'luxe_secret',
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Google authentication failed' });
+  }
+});
+
+// ===== APPLE AUTH =====
+const jwtApple = await import('jsonwebtoken');
+app.post('/api/apple-auth', async (req, res) => {
+  try {
+    const { id_token } = req.body;
+    if (!id_token) return res.status(400).json({ error: 'Apple token is required' });
+
+    // Decode Apple's JWT to get user info
+    const decoded = jwtApple.default.decode(id_token);
+    const email = decoded.email;
+    const name = decoded.name || 'Apple User';
+
+    if (!email) return res.status(400).json({ error: 'No email from Apple' });
+
+    // Check if user exists
+    let user = await User.findOne({ email: email.toLowerCase().trim() });
+
+    if (!user) {
+      // Create new user from Apple profile
+      const username = name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Math.floor(Math.random() * 10000);
+      user = await User.create({
+        name: name,
+        username: username,
+        email: email.toLowerCase().trim(),
+        password: await bcrypt.hash(decoded.sub + process.env.JWT_SECRET || 'luxe_secret', 10),
+        role: 'customer'
+      });
+    }
+
+    const token = jwt.sign(
+      { id: user._id, role: user.role, email: user.email, isSuperAdmin: user.isSuperAdmin || false },
+      process.env.JWT_SECRET || 'luxe_secret',
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Apple authentication failed' });
+  }
+});
+
 // ===== PRODUCT ENDPOINTS =====
 app.get('/api/products', async (req, res) => {
   try {

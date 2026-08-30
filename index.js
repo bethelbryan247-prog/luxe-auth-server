@@ -140,6 +140,18 @@ app.post('/api/register', async (req, res) => {
   res.status(201).json({ message: 'User registered', user: { id: user._id, name, email, role: user.role } });
 });
 
+// ===== CHECK EMAIL (for login/register email indicator) =====
+app.post('/api/check-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    res.json({ exists: !!user });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.post('/api/login', async (req, res) => {
   const { email, password, remember } = req.body;
   const user = await User.findOne({ email });
@@ -508,32 +520,4 @@ app.put('/api/auth/update-profile', authMiddleware, async (req, res) => {
         isSuperAdmin: user.isSuperAdmin || user.email === SUPER_ADMIN_EMAIL
       }
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update profile' });
-  }
-});
-
-app.put('/api/auth/change-password', authMiddleware, async (req, res) => {
-  try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Current and new password are required' });
-    if (newPassword.length < 6) return res.status(400).json({ error: 'New password must be at least 6 characters' });
-
-    const user = await User.findById(req.userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch) return res.status(400).json({ error: 'Current password is incorrect' });
-
-    user.password = await bcrypt.hash(newPassword, 10);
-    await user.save();
-
-    res.json({ message: 'Password updated successfully' });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to update password' });
-  }
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`LUXE Auth Server running on port ${PORT}`);
-});
+  } catch (err)

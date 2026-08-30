@@ -26,7 +26,7 @@ const UserSchema = new mongoose.Schema({
   name: String,
   firstName: { type: String, default: '' },
   lastName: { type: String, default: '' },
-  username: { type: String, default: '' },
+  username: { type: String, default: '', trim: true, lowercase: true },
   email: { type: String, unique: true },
   password: String,
   phone: { type: String, default: '' },
@@ -131,13 +131,51 @@ app.get('/', (req, res) => {
 });
 
 // ===== AUTH ROUTES =====
+// UPDATED: Now accepts username + delivery, returns token
 app.post('/api/register', async (req, res) => {
-  const { name, email, password, role } = req.body;
-  const existing = await User.findOne({ email });
-  if (existing) return res.status(400).json({ error: 'Email already registered' });
-  const hashed = await bcrypt.hash(password, 10);
-  const user = await User.create({ name, email, password: hashed, role: role || 'customer' });
-  res.status(201).json({ message: 'User registered', user: { id: user._id, name, email, role: user.role } });
+  try {
+    const { name, username, email, password, role, delivery } = req.body;
+
+    // Check if email exists
+    const existingEmail = await User.findOne({ email: email?.toLowerCase().trim() });
+    if (existingEmail) return res.status(400).json({ error: 'Email already registered' });
+
+    // Check if username exists
+    if (username) {
+      const existingUsername = await User.findOne({ username: username.toLowerCase().trim() });
+      if (existingUsername) return res.status(400).json({ error: 'Username already taken' });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      name,
+      username: username ? username.toLowerCase().trim() : '',
+      email: email.toLowerCase().trim(),
+      password: hashed,
+      role: role || 'customer',
+      delivery: delivery || {}
+    });
+
+    const token = jwt.sign(
+      { id: user._id, role: user.role, email: user.email, isSuperAdmin: user.isSuperAdmin || false },
+      process.env.JWT_SECRET || 'luxe_secret',
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      message: 'User registered',
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Registration failed' });
+  }
 });
 
 // ===== CHECK EMAIL (for login/register email indicator) =====
@@ -146,6 +184,20 @@ app.post('/api/check-email', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
     const user = await User.findOne({ email: email.toLowerCase().trim() });
+    res.json({ exists: !!user });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ===== CHECK USERNAME (for register username indicator) =====
+app.post('/api/check-username', async (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username || username.length < 3) {
+      return res.json({ exists: false });
+    }
+    const user = await User.findOne({ username: username.toLowerCase().trim() });
     res.json({ exists: !!user });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

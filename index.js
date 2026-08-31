@@ -79,6 +79,85 @@ const ProductSchema = new mongoose.Schema({
 });
 const Product = mongoose.model('Product', ProductSchema);
 
+// ===== ORDER MODEL =====
+const OrderSchema = new mongoose.Schema({
+  reference: { type: String, required: true, unique: true },
+  paymentProvider: { type: String, default: 'paystack' },
+  paymentStatus: { type: String, default: 'paid' },
+  status: { type: String, default: 'paid' },
+  currency: { type: String, default: 'NGN' },
+  subtotal: { type: Number, default: 0 },
+  deliveryFee: { type: Number, default: 0 },
+  discount: { type: Number, default: 0 },
+  total: { type: Number, default: 0 },
+  amountPaid: { type: Number, default: 0 },
+  deliveryType: { type: String, default: 'standard' },
+  items: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  shipping: { type: mongoose.Schema.Types.Mixed, default: {} },
+  customer: {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    name: { type: String, default: '' },
+    email: { type: String, default: '' },
+    phone: { type: String, default: '' }
+  },
+  gatewayResponse: { type: mongoose.Schema.Types.Mixed, default: {} },
+  paidAt: { type: Date, default: Date.now },
+  createdAt: { type: Date, default: Date.now }
+});
+const Order = mongoose.model('Order', OrderSchema);
+
+function extractAuthUser(req) {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET || 'luxe_secret');
+  } catch (err) {
+    return null;
+  }
+}
+
+async function syncEmbeddedUserOrder(orderDoc) {
+  if (!orderDoc?.customer?.userId) return;
+  const user = await User.findById(orderDoc.customer.userId);
+  if (!user) return;
+
+  const embeddedOrder = {
+    id: orderDoc.reference,
+    reference: orderDoc.reference,
+    items: orderDoc.items,
+    subtotal: orderDoc.subtotal,
+    deliveryType: orderDoc.deliveryType,
+    deliveryFee: orderDoc.deliveryFee,
+    discount: orderDoc.discount,
+    total: orderDoc.total,
+    status: orderDoc.status,
+    paymentStatus: orderDoc.paymentStatus,
+    currency: orderDoc.currency,
+    date: orderDoc.createdAt,
+    shipping: orderDoc.shipping
+  };
+
+  const existingIndex = (user.orders || []).findIndex(function(order) {
+    return order.id === orderDoc.reference || order.reference === orderDoc.reference;
+  });
+
+  if (existingIndex >= 0) {
+    user.orders[existingIndex] = { ...user.orders[existingIndex], ...embeddedOrder };
+  } else {
+    user.orders.unshift(embeddedOrder);
+  }
+
+  user.delivery = {
+    phone: orderDoc.shipping?.phone || user.delivery?.phone || '',
+    address: orderDoc.shipping?.address || user.delivery?.address || '',
+    city: orderDoc.shipping?.city || user.delivery?.city || '',
+    state: orderDoc.shipping?.state || user.delivery?.state || '',
+    notes: orderDoc.shipping?.notes || user.delivery?.notes || ''
+  };
+
+  await user.save();
+}
+
 // ===== SEED SUPER ADMIN =====
 const existingNewAdmin = await User.findOne({ email: SUPER_ADMIN_EMAIL });
 const existingOldAdmin = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
@@ -503,16 +582,159 @@ app.get('/api/customers/:email', authMiddleware, adminMiddleware, async (req, re
 });
 
 // ===== ORDER ENDPOINTS =====
+app.post('/api/payments/verify', async (req, res) => {
+  try {
+    const { reference, order } = req.body;
+    if (!reference) return res.status(400).json({ error: 'Payment reference is required' });
+    if (!order || !Array.isArray(order.items) || order.items.length === 0) {
+      return res.status(400).json({ error: 'Order items are required' });
+    }
+
+    const existingOrder = await Order.findOne({ reference });
+    if (existingOrder) {
+      return res.json({ message: 'Payment already verified', order: existingOrder });
+    }
+
+    const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+    if (!paystackSecretKey) {
+      return res.status(500).json({ error: 'Paystack secret key is not configured on the server' });
+    }
+
+    const paystackResponse = await fetch('https://api.paystack.co/transaction/verify/' + encodeURIComponent(reference), {
+      method: 'GET',
+      headers: {
+        'Authorization': 'Bearer ' + paystackSecretKey,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const paystackData = await paystackResponse.json();
+    if (!paystackResponse.ok || !paystackData.status) {
+      return res.status(400).json({ error: paystackData?.message || 'Could not verify payment with Paystack' });
+    }
+
+    if (paystackData.data?.status !== 'success') {
+      return res.status(400).json({ error: 'Payment is not marked as successful yet' });
+    }
+
+    const expectedAmount = Math.round(Number(order.total || 0) * 100);
+    if (!expectedAmount || paystackData.data.amount !== expectedAmount) {
+      return res.status(400).json({ error: 'Verified payment amount does not match the checkout total' });
+    }
+
+    const authUser = extractAuthUser(req);
+    const user = authUser?.id ? await User.findById(authUser.id) : null;
+    const customerEmail = String(order.shipping?.email || paystackData.data.customer?.email || '').toLowerCase().trim();
+
+    const orderDoc = await Order.create({
+      reference,
+      paymentProvider: 'paystack',
+      paymentStatus: 'paid',
+      status: 'paid',
+      currency: paystackData.data.currency || 'NGN',
+      subtotal: Number(order.subtotal || 0),
+      deliveryFee: Number(order.deliveryFee || 0),
+      discount: Number(order.discount || 0),
+      total: Number(order.total || 0),
+      amountPaid: Number(paystackData.data.amount || 0) / 100,
+      deliveryType: order.deliveryType || 'standard',
+      items: order.items,
+      shipping: order.shipping || {},
+      customer: {
+        userId: user?._id || null,
+        name: order.shipping?.name || user?.name || paystackData.data.metadata?.custom_fields?.find(function(field) { return field.variable_name === 'customer_name'; })?.value || '',
+        email: customerEmail,
+        phone: order.shipping?.phone || ''
+      },
+      gatewayResponse: paystackData.data,
+      paidAt: paystackData.data.paid_at ? new Date(paystackData.data.paid_at) : new Date()
+    });
+
+    if (user) {
+      await syncEmbeddedUserOrder(orderDoc);
+    }
+
+    res.status(201).json({ message: 'Payment verified and order saved', order: orderDoc });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to verify payment and save order' });
+  }
+});
+
+app.get('/api/my-orders', authMiddleware, async (req, res) => {
+  try {
+    const storedOrders = await Order.find({ 'customer.userId': req.userId }).sort({ createdAt: -1 });
+
+    if (storedOrders.length > 0) {
+      const normalizedOrders = storedOrders.map(function(order) {
+        return {
+          id: order.reference,
+          reference: order.reference,
+          items: order.items,
+          subtotal: order.subtotal,
+          deliveryType: order.deliveryType,
+          deliveryFee: order.deliveryFee,
+          discount: order.discount,
+          total: order.total,
+          amountPaid: order.amountPaid,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          currency: order.currency,
+          date: order.createdAt,
+          shipping: order.shipping
+        };
+      });
+
+      return res.json({ orders: normalizedOrders });
+    }
+
+    const user = await User.findById(req.userId, { orders: 1 });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ orders: user.orders || [] });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch your orders' });
+  }
+});
+
 app.get('/api/orders', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const users = await User.find({ 'orders.0': { $exists: true } }, { password: 0 });
-    const orders = [];
-    users.forEach(u => {
-      (u.orders || []).forEach(o => {
-        orders.push({ ...o, customerName: u.name, customerEmail: u.email });
+    const storedOrders = await Order.find({}).sort({ createdAt: -1 });
+    const legacyUsers = await User.find({ 'orders.0': { $exists: true } }, { password: 0 });
+    const legacyOrders = [];
+
+    legacyUsers.forEach(function(u) {
+      (u.orders || []).forEach(function(o) {
+        var orderRef = o.reference || o.id;
+        var existsInStoredOrders = storedOrders.some(function(stored) {
+          return stored.reference === orderRef;
+        });
+        if (!existsInStoredOrders) {
+          legacyOrders.push({ ...o, reference: orderRef, customerName: u.name, customerEmail: u.email });
+        }
       });
     });
-    res.json({ orders });
+
+    const normalizedStoredOrders = storedOrders.map(function(order) {
+      return {
+        id: order.reference,
+        reference: order.reference,
+        items: order.items,
+        subtotal: order.subtotal,
+        deliveryType: order.deliveryType,
+        deliveryFee: order.deliveryFee,
+        discount: order.discount,
+        total: order.total,
+        amountPaid: order.amountPaid,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+        currency: order.currency,
+        date: order.createdAt,
+        shipping: order.shipping,
+        customerName: order.customer?.name || order.shipping?.name || '',
+        customerEmail: order.customer?.email || order.shipping?.email || ''
+      };
+    });
+
+    res.json({ orders: normalizedStoredOrders.concat(legacyOrders) });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch orders' });
   }
@@ -522,9 +744,18 @@ app.put('/api/orders/:orderId/status', authMiddleware, adminMiddleware, async (r
   try {
     const { orderId } = req.params;
     const { status, email } = req.body;
+
+    const storedOrder = await Order.findOne({ reference: orderId });
+    if (storedOrder) {
+      storedOrder.status = status;
+      await storedOrder.save();
+      await syncEmbeddedUserOrder(storedOrder);
+      return res.json({ message: 'Order status updated', order: storedOrder });
+    }
+
     const user = await User.findOne({ email });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    const order = user.orders.find(o => o.id === orderId);
+    const order = user.orders.find(function(o) { return o.id === orderId || o.reference === orderId; });
     if (!order) return res.status(404).json({ error: 'Order not found' });
     order.status = status;
     await user.save();

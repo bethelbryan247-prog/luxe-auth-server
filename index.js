@@ -158,6 +158,67 @@ async function syncEmbeddedUserOrder(orderDoc) {
   await user.save();
 }
 
+async function sendOrderEmails(orderDoc) {
+  try {
+    const customerName = orderDoc.customer?.name || 'Customer';
+    const customerEmail = orderDoc.customer?.email || '';
+    const adminEmail = SUPER_ADMIN_EMAIL;
+
+    const itemsHtml = (orderDoc.items || []).map(function(item) {
+      const qty = item.quantity || 1;
+      const name = item.name || item.title || 'Item';
+      const price = Number(item.price || 0).toLocaleString('en-NG', { style: 'currency', currency: 'NGN' });
+      return '<tr><td style="padding:8px;border-bottom:1px solid #eee;">' + name + ' × ' + qty + '</td><td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">' + price + '</td></tr>';
+    }).join('');
+
+    const total = Number(orderDoc.total || 0).toLocaleString('en-NG', { style: 'currency', currency: 'NGN' });
+    const shipping = orderDoc.shipping || {};
+
+    // Customer confirmation email
+    if (customerEmail) {
+      await resend.emails.send({
+        from: 'LUXE <onboarding@resend.dev>',
+        to: customerEmail,
+        subject: 'LUXE – Order Confirmed (' + orderDoc.reference + ')',
+        html: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px;">' +
+              '<h2 style="color:#1a1a1a;">Thank you for your order, ' + customerName + '!</h2>' +
+              '<p>Your payment has been confirmed and your items are on the way.</p>' +
+              '<p><strong>Reference:</strong> ' + orderDoc.reference + '<br>' +
+              '<strong>Total:</strong> ' + total + '<br>' +
+              '<strong>Delivery:</strong> ' + (shipping.address || '') + ', ' + (shipping.city || '') + ', ' + (shipping.state || '') + '</p>' +
+              '<h3 style="margin-top:24px;">Order Summary</h3>' +
+              '<table style="width:100%;border-collapse:collapse;">' + itemsHtml + '</table>' +
+              '<p style="text-align:right;font-size:18px;margin-top:12px;"><strong>Total: ' + total + '</strong></p>' +
+              '<p style="margin-top:24px;color:#666;">Thank you for shopping with LUXE.</p>' +
+              '</div>'
+      });
+    }
+
+    // Admin notification email
+    await resend.emails.send({
+      from: 'LUXE <onboarding@resend.dev>',
+      to: adminEmail,
+      subject: 'New LUXE Order – ' + orderDoc.reference + ' (' + total + ')',
+      html: '<div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:20px;">' +
+            '<h2 style="color:#1a1a1a;">New Order Received</h2>' +
+            '<p><strong>Customer:</strong> ' + customerName + ' (' + customerEmail + ')<br>' +
+            '<strong>Phone:</strong> ' + (orderDoc.customer?.phone || shipping?.phone || '') + '<br>' +
+            '<strong>Reference:</strong> ' + orderDoc.reference + '<br>' +
+            '<strong>Total:</strong> ' + total + '</p>' +
+            '<h3 style="margin-top:24px;">Items</h3>' +
+            '<table style="width:100%;border-collapse:collapse;">' + itemsHtml + '</table>' +
+            '<p style="text-align:right;font-size:18px;margin-top:12px;"><strong>Total: ' + total + '</strong></p>' +
+            '<h3 style="margin-top:24px;">Delivery Address</h3>' +
+            '<p>' + (shipping.address || '') + '<br>' + (shipping.city || '') + ', ' + (shipping.state || '') + '<br>' + (shipping.phone || '') + '</p>' +
+            '</div>'
+    });
+
+    console.log('Order emails sent for', orderDoc.reference);
+  } catch (err) {
+    console.error('Email send failed (non-fatal):', err.message);
+  }
+}
+
 // ===== SEED SUPER ADMIN =====
 const existingNewAdmin = await User.findOne({ email: SUPER_ADMIN_EMAIL });
 const existingOldAdmin = await User.findOne({ email: 'bethelbryan1937@gmail.com' });
@@ -653,6 +714,9 @@ app.post('/api/payments/verify', async (req, res) => {
     if (user) {
       await syncEmbeddedUserOrder(orderDoc);
     }
+
+    // Send confirmation emails (customer + admin)
+    sendOrderEmails(orderDoc);
 
     res.status(201).json({ message: 'Payment verified and order saved', order: orderDoc });
   } catch (err) {
